@@ -15,7 +15,7 @@ class Tracker(): #Tracker
             var[0].append(update)
 
         #Constrain size of convolution
-        if len(self.all_tracker[0][0]) > 100: #Assume all variable are updated uniformly
+        if len(self.all_tracker[0][0]) > 10: #Assume all variable are updated uniformly
             for var in self.all_tracker:
                 var[0].pop(0)
 
@@ -55,8 +55,8 @@ class Parameters:
         #Task Params
         self.depth = 7
         self.noise_len = [10,20]
-        self.train_evals= 5
-        self.valid_evals = 20
+        self.train_evals= 10
+        self.valid_evals = 50
 
         #Dependents
         self.num_input = 1; self.num_output = 1
