@@ -601,12 +601,22 @@ class SSNE:
                 if random.random() < self.parameters.mutation_prob:
                     self.mutate_inplace(pop[i])
 
-class Evo:
-    def __init__(self, parameters):
+class Coarse_Evo:
+    def __init__(self, parameters, gene_sample):
         self.parameters = parameters;
         self.num_elitists = int(parameters.elite_fraction * parameters.pop_size)
         if self.num_elitists < 1: self.num_elitists = 1
-        self.num_substructures = 13
+
+
+        #Coarse_Evo_params
+        self.transfer_util = []; counter = 0; self.all_keys = list(gene_sample.param_dict.keys())
+        W = gene_sample.param_dict
+        for key in self.all_keys:
+            self.transfer_util.append([W[key].size + counter, W[key].shape[0], W[key].shape[1]])
+            counter += W[key].size
+        self.num_params = counter
+
+
 
     def selection_tournament(self, index_rank, num_offsprings, tournament_size):
         total_choices = len(index_rank)
@@ -759,46 +769,46 @@ class Evo:
             else:
                 continue
 
-        if self.num_substructures == 13:  # Only for NTM
-            # WRITE GATES
-            # Layer 1
-            num_cross_overs = randint(1, len(gene1.w_writegate))
-            for i in range(num_cross_overs):
-                rand = random.random()
-                if rand < 0.33:
-                    ind_cr = randint(0, len(gene1.w_writegate) - 1)
-                    gene1.w_writegate[ind_cr, :] = gene2.w_writegate[ind_cr, :]
-                elif rand < 0.66:
-                    ind_cr = randint(0, len(gene1.w_writegate) - 1)
-                    gene2.w_writegate[ind_cr, :] = gene1.w_writegate[ind_cr, :]
-                else:
-                    continue
 
-            # Layer 2
-            num_cross_overs = randint(1, len(gene1.w_rec_writegate))
-            for i in range(num_cross_overs):
-                rand = random.random()
-                if rand < 0.33:
-                    ind_cr = randint(0, len(gene1.w_rec_writegate) - 1)
-                    gene1.w_rec_writegate[ind_cr, :] = gene2.w_rec_writegate[ind_cr, :]
-                elif rand < 0.66:
-                    ind_cr = randint(0, len(gene1.w_rec_writegate) - 1)
-                    gene2.w_rec_writegate[ind_cr, :] = gene1.w_rec_writegate[ind_cr, :]
-                else:
-                    continue
+        # WRITE GATES
+        # Layer 1
+        num_cross_overs = randint(1, len(gene1.w_writegate))
+        for i in range(num_cross_overs):
+            rand = random.random()
+            if rand < 0.33:
+                ind_cr = randint(0, len(gene1.w_writegate) - 1)
+                gene1.w_writegate[ind_cr, :] = gene2.w_writegate[ind_cr, :]
+            elif rand < 0.66:
+                ind_cr = randint(0, len(gene1.w_writegate) - 1)
+                gene2.w_writegate[ind_cr, :] = gene1.w_writegate[ind_cr, :]
+            else:
+                continue
 
-            # Layer 3
-            num_cross_overs = randint(1, len(gene1.w_mem_writegate))
-            for i in range(num_cross_overs):
-                rand = random.random()
-                if rand < 0.33:
-                    ind_cr = randint(0, len(gene1.w_mem_writegate) - 1)
-                    gene1.w_mem_writegate[ind_cr, :] = gene2.w_mem_writegate[ind_cr, :]
-                elif rand < 0.66:
-                    ind_cr = randint(0, len(gene1.w_mem_writegate) - 1)
-                    gene2.w_mem_writegate[ind_cr, :] = gene1.w_mem_writegate[ind_cr, :]
-                else:
-                    continue
+        # Layer 2
+        num_cross_overs = randint(1, len(gene1.w_rec_writegate))
+        for i in range(num_cross_overs):
+            rand = random.random()
+            if rand < 0.33:
+                ind_cr = randint(0, len(gene1.w_rec_writegate) - 1)
+                gene1.w_rec_writegate[ind_cr, :] = gene2.w_rec_writegate[ind_cr, :]
+            elif rand < 0.66:
+                ind_cr = randint(0, len(gene1.w_rec_writegate) - 1)
+                gene2.w_rec_writegate[ind_cr, :] = gene1.w_rec_writegate[ind_cr, :]
+            else:
+                continue
+
+        # Layer 3
+        num_cross_overs = randint(1, len(gene1.w_mem_writegate))
+        for i in range(num_cross_overs):
+            rand = random.random()
+            if rand < 0.33:
+                ind_cr = randint(0, len(gene1.w_mem_writegate) - 1)
+                gene1.w_mem_writegate[ind_cr, :] = gene2.w_mem_writegate[ind_cr, :]
+            elif rand < 0.66:
+                ind_cr = randint(0, len(gene1.w_mem_writegate) - 1)
+                gene2.w_mem_writegate[ind_cr, :] = gene1.w_mem_writegate[ind_cr, :]
+            else:
+                continue
 
     def regularize_weight(self, weight):
         if weight > self.parameters.weight_magnitude_limit:
@@ -814,44 +824,41 @@ class Evo:
         super_mut_prob = 0.05
         reset_prob = super_mut_prob + 0.0
 
-        #Macro propoerties of weights
+        num_mutations = fastrand.pcg32bounded(int(math.ceil(num_mutation_frac * self.num_params))) #Select number of mutations
+        for i in range(num_mutations):
+            coarse_ind = fastrand.pcg32bounded(self.num_params) - 1
+
+            #Turn coarse index into a [key, ind_1, ind_2]
+            for i, entry in enumerate(self.transfer_util):
+                if coarse_ind < entry[0]:
+                    key = self.all_keys[i]
+                    if i == 0: intra_ind = coarse_ind
+                    else: intra_ind = coarse_ind - self.transfer_util[i-1][0]
+
+                    ind_dim1 = intra_ind/entry[2]
+                    ind_dim2 = intra_ind % entry[2]
+                    break
+
+            #print coarse_ind, intra_ind, entry, ind_dim1, ind_dim2
 
 
+            random_num = random.random()
+            W = gene.param_dict
+            if random_num < super_mut_prob:  # Super Mutation probability
+                W[key][ind_dim1, ind_dim2] += random.gauss(0, super_mut_strength *
+                                                           W[key][
+                                                               ind_dim1, ind_dim2])
+            elif random_num < reset_prob:  # Reset probability
+                W[key][ind_dim1, ind_dim2] = random.gauss(0, 1)
 
+            else:  # mutauion even normal
+                W[key][ind_dim1, ind_dim2] += random.gauss(0, mut_strength * W[key][
+                    ind_dim1, ind_dim2])
 
+            # Regularization hard limit
+            W[key][ind_dim1, ind_dim2] = self.regularize_weight(
+                W[key][ind_dim1, ind_dim2])
 
-
-
-
-
-
-        # References to the variable keys
-        keys = list(gene.param_dict.keys())
-        W = gene.param_dict
-        num_structures = len(keys)
-        for ssne_prob, key in zip(ss_mut_dist, keys): #For each structure
-            if random.random()<ssne_prob:
-
-                num_mutations = fastrand.pcg32bounded(int(math.ceil(num_mutation_frac * W[key].size)))  # Number of mutation instances
-                for _ in range(num_mutations):
-                    ind_dim1 = fastrand.pcg32bounded(W[key].shape[0])
-                    ind_dim2 = fastrand.pcg32bounded(W[key].shape[-1])
-                    random_num = random.random()
-
-                    if random_num < super_mut_prob:  # Super Mutation probability
-                        W[key][ind_dim1, ind_dim2] += random.gauss(0, super_mut_strength *
-                                                                                      W[key][
-                                                                                          ind_dim1, ind_dim2])
-                    elif random_num < reset_prob:  # Reset probability
-                        W[key][ind_dim1, ind_dim2] = random.gauss(0, 1)
-
-                    else:  # mutauion even normal
-                        W[key][ind_dim1, ind_dim2] += random.gauss(0, mut_strength *W[key][
-                                                                                          ind_dim1, ind_dim2])
-
-                    # Regularization hard limit
-                    W[key][ind_dim1, ind_dim2] = self.regularize_weight(
-                        W[key][ind_dim1, ind_dim2])
 
     def epoch(self, pop, fitnesses):
         # Entire epoch is handled with indices; Index rank nets by fitness evaluation (0 is the best after reversing)
@@ -889,9 +896,9 @@ class Evo:
             pop[j] = copy.deepcopy(pop[off_j])
             self.crossover_inplace(pop[i], pop[j])
 
-        # Crossover for selected offsprings
-        for i, j in zip(offsprings[0::2], offsprings[1::2]):
-            if random.random() < self.parameters.crossover_prob: self.crossover_inplace(pop[i], pop[j])
+        # # Crossover for selected offsprings
+        # for i, j in zip(offsprings[0::2], offsprings[1::2]):
+        #     if random.random() < self.parameters.crossover_prob: self.crossover_inplace(pop[i], pop[j])
 
         # Mutate all genes in the population except the new elitists
         for i in range(self.parameters.pop_size):

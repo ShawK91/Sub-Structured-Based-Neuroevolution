@@ -34,10 +34,11 @@ class Parameters:
         self.pop_size = 100
         self.load_colony = 0
         self.total_gens = 20000
+        self.use_ssne = False
 
         #NN specifics
         self.num_hnodes = 5
-        self.num_mem = 5
+        self.num_mem = 1
         self.grumb_topology = 1 #1: Default (hidden nodes cardinality attached to that of mem (No trascriber))
                                 #2: Detached (Memory independent from hidden nodes (transcribing function))
                                 #3: FF (Normal Feed-Forward Net)
@@ -53,7 +54,7 @@ class Parameters:
         self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
 
         #Task Params
-        self.depth = 7
+        self.depth = 5
         self.noise_len = [10,20]
         self.train_evals= 10
         self.valid_evals = 50
@@ -67,11 +68,15 @@ class Parameters:
 
 class Sequence_classifier:
     def __init__(self, parameters):
-        self.parameters = parameters; self.ssne = mod.SSNE(parameters)
+        self.parameters = parameters;
         self.depth = parameters.depth; self.noise_len = self.parameters.noise_len
         self.pop = []
         for _ in range(parameters.pop_size):
             self.pop.append(mod.GRUMB(parameters))
+
+        if parameters.use_ssne: self.evo= mod.SSNE(parameters)
+        else: self.evo = mod.Coarse_Evo(parameters, self.pop[0])
+
 
 
     def generate_task(self, num_instances):
@@ -142,7 +147,7 @@ class Sequence_classifier:
         champion_index = fitnesses.index(max(fitnesses))
         valid_fitness = self.run_simulations(self.pop[champion_index], valid_set, is_test=True)
 
-        self.ssne.epoch(self.pop, fitnesses)
+        self.evo.epoch(self.pop, fitnesses)
 
         return fitnesses[champion_index], valid_fitness
 
