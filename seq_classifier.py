@@ -1,114 +1,125 @@
-import numpy as np, os, math, random
-import mod_ecj as mod, sys
+import numpy as np, os
+#import MultiNEAT as NEAT
+import mod_mem_net as mod, sys
 from random import randint
+import random
+#np.seterr(all='raise')
+save_foldername = 'RSeq_classifier'
+class tracker(): #Tracker
+    def __init__(self, parameters, foldername = save_foldername):
+        self.foldername = foldername
+        self.fitnesses = []; self.avg_fitness = 0; self.tr_avg_fit = []
+        self.hof_fitnesses = []; self.hof_avg_fitness = 0; self.hof_tr_avg_fit = []
+        if not os.path.exists(foldername):
+            os.makedirs(foldername)
+        self.file_save = 'mem_seq_classifier.csv'
 
-class Tracker(): #Tracker
-    def __init__(self, parameters, vars_string, project_string):
-        self.vars_string = vars_string; self.project_string = project_string
-        self.foldername = parameters.save_foldername
-        self.all_tracker = [[[],0.0,[]] for _ in vars_string] #[Id of var tracked][fitnesses, avg_fitness, csv_fitnesses]
-        if not os.path.exists(self.foldername):
-            os.makedirs(self.foldername)
 
-    def update(self, updates, generation):
-        for update, var in zip(updates, self.all_tracker):
-            var[0].append(update)
 
-        #Constrain size of convolution
-        if len(self.all_tracker[0][0]) > 10: #Assume all variable are updated uniformly
-            for var in self.all_tracker:
-                var[0].pop(0)
+    def add_fitness(self, fitness, generation):
+        self.fitnesses.append(fitness)
+        if len(self.fitnesses) > 100:
+            self.fitnesses.pop(0)
+        self.avg_fitness = sum(self.fitnesses)/len(self.fitnesses)
+        if generation % 10 == 0: #Save to csv file
+            filename = self.foldername + '/rough_' + self.file_save
+            self.tr_avg_fit.append(np.array([generation, self.avg_fitness]))
+            np.savetxt(filename, np.array(self.tr_avg_fit), fmt='%.3f', delimiter=',')
 
-        #Update new average
-        for var in self.all_tracker:
-            var[1] = sum(var[0])/float(len(var[0]))
+    def add_hof_fitness(self, hof_fitness, generation):
+        self.hof_fitnesses.append(hof_fitness)
+        if len(self.hof_fitnesses) > 100:
+            self.hof_fitnesses.pop(0)
+        self.hof_avg_fitness = sum(self.hof_fitnesses)/len(self.hof_fitnesses)
+        if generation % 10 == 0: #Save to csv file
+            filename = self.foldername + '/hof_' + self.file_save
+            self.hof_tr_avg_fit.append(np.array([generation, self.hof_avg_fitness]))
+            np.savetxt(filename, np.array(self.hof_tr_avg_fit), fmt='%.3f', delimiter=',')
 
-        if generation % 10 == 0:  # Save to csv file
-            for i, var in enumerate(self.all_tracker):
-                var[2].append(np.array([generation, var[1]]))
-                filename = self.foldername + self.vars_string[i] + self.project_string
-                np.savetxt(filename, np.array(var[2]), fmt='%.3f', delimiter=',')
+    def save_csv(self, generation, filename):
+        self.tr_avg_fit.append(np.array([generation, self.avg_fitness]))
+        np.savetxt(filename, np.array(self.tr_avg_fit), fmt='%.3f', delimiter=',')
 
-class Parameters:
+class SSNE_param:
     def __init__(self):
-        self.pop_size = 100
-        self.load_colony = 0
-        self.total_gens = 20000
-        self.use_ssne = False
-
-        #NN specifics
+        self.num_input = 1
         self.num_hnodes = 5
-        self.num_mem = 1
-        self.grumb_topology = 1 #1: Default (hidden nodes cardinality attached to that of mem (No trascriber))
-                                #2: Detached (Memory independent from hidden nodes (transcribing function))
-                                #3: FF (Normal Feed-Forward Net)
-        #self.output_activation = 'tanh' #tanh or hardmax
+        self.num_output = 1
 
-        #SSNE stuff
+
         self.elite_fraction = 0.1
-        self.crossover_prob = 0.0
+        self.crossover_prob = 0
         self.mutation_prob = 0.9
-        self.extinction_prob = 0.00 #Probability of extinction event
-        self.extinction_magnituide = 0.5 #Probabilty of extinction for each genome, given an extinction event
         self.weight_magnitude_limit = 1000000000000
         self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
 
-        #Task Params
-        self.depth = 5
-        self.noise_len = [10,20]
-        self.train_evals= 10
-        self.valid_evals = 50
 
-        #Dependents
-        self.num_input = 1; self.num_output = 1
-        if self.grumb_topology == 1: self.num_mem = self.num_hnodes
-        self.save_foldername = 'R_ECJ/'
-        if not os.path.exists(self.save_foldername): os.makedirs(self.save_foldername)
+        self.total_num_weights = 3 * (
+            self.num_hnodes * (self.num_input + 1) + self.num_hnodes * (self.num_output + 1)) + 2 * self.num_hnodes * (
+            self.num_hnodes + 1) + self.num_output * (self.num_hnodes + 1) + self.num_hnodes
+        print 'Num parameters: ', self.total_num_weights
 
+class Parameters:
+    def __init__(self):
+            self.population_size = 10
+            self.depth = 15
+            self.interleaving_lower_bound = 10
+            self.interleaving_upper_bound = 20
+            self.repeat_trials = 10
+            self.test_trials = 50
+
+
+            #DEAP/SSNE stuff
+            self.use_ssne = 0
+            self.ssne_param = SSNE_param()
+            self.total_gens = 10000
+            self.reward_scheme = 3
+
+
+
+parameters = Parameters() #Create the Parameters class
+tracker = tracker(parameters) #Initiate tracker
 
 class Sequence_classifier:
     def __init__(self, parameters):
-        self.parameters = parameters;
-        self.depth = parameters.depth; self.noise_len = self.parameters.noise_len
-        self.pop = []
-        for _ in range(parameters.pop_size):
-            self.pop.append(mod.GRUMB(parameters))
+        self.parameters = parameters; self.ssne_param = self.parameters.ssne_param
+        self.depth = self.parameters.depth
+        self.interleaving_upper_bound = self.parameters.interleaving_upper_bound; self.interleaving_lower_bound = self.parameters.interleaving_lower_bound
 
-        if parameters.use_ssne: self.evo= mod.SSNE(parameters)
-        else: self.evo = mod.Coarse_Evo(parameters, self.pop[0])
+        if parameters.use_ssne: self.agent = mod.SSNE(self.parameters, self.ssne_param)
+        else: self.agent = mod.Coarse_Evo(self.parameters, self.ssne_param)
 
 
+    def generate_input(self):
+        input = []
+        for i in range(self.depth):
+            #Encode the signal (1 or -1s)
+            if random.random() < 0.5: input.append(-1)
+            else: input.append(1)
+            if i == self.depth - 1: continue
 
-    def generate_task(self, num_instances):
-        input_set = []
-        for _ in range(num_instances):
-            input = []
-            for i in range(self.depth):
-                #Encode the signal (1 or -1s)
-                if random.random() < 0.5: input.append(-1)
-                else: input.append(1)
-                if i == self.depth - 1: continue
+            #Encdoe the noise (0's)
+            num_noise = randint(self.interleaving_lower_bound, self.interleaving_upper_bound)
+            for i in range(num_noise): input.append(0)
+        return input
 
-                #Encdoe the noise (0's)
-                num_noise = randint(self.noise_len[0], self.noise_len[1])
-                for i in range(num_noise): input.append(0)
-            input_set.append(input)
+    def get_reward(self, input, output):
 
-        return input_set
+        if self.parameters.reward_scheme == 1: #Block continous reward - End decision matters
+            target = sum(input)
+            if target > 1: target = 1
+            elif target < -1: target = -1
+            reward = output[-1] * target * 1.0
 
-    def get_reward(self, input, output, is_test):
-        if is_test: #Testing criteria (harsh criterion)
-            target = 0.0
-            reward = 1.0
-            for i, j in zip(input, output):
-                target += i
-                if i == 1 or i == -1:
-                    point_reward = j * target
-                    if point_reward < 0:
-                        reward = 0.0
-                        break
+        elif self.parameters.reward_scheme == 2: #2 Block reward binary - End decision matters plus also calculated binary rather than continously
+            target = sum(input)
+            if target > 1: target = 1
+            elif target < -1: target = -1
+            if target * output[-1] > (1.0 - self.parameters.tolerance): reward = 1.0
+            else: reward = 0.0
 
-        else: #Training criteria
+
+        elif self.parameters.reward_scheme == 3: #3 Fine continous reward - prediction at each time-step matters
             reward = 0.0
             target = 0.0
             for i, j in zip(input, output):
@@ -118,56 +129,116 @@ class Sequence_classifier:
                 elif point_reward < -1: point_reward = -1
                 reward += point_reward
 
+        elif self.parameters.reward_scheme == 4: #4 Coarse reward clacluated only at points of 1/-1 introdcution
+            reward = 0.0
+            target = 0.0
+            for i, j in zip(input, output):
+                target += i
+                if i == 1 or i == -1:
+                    point_reward = j * target
+                    if point_reward > 1: point_reward = 1
+                    elif point_reward < -1: point_reward = -1
+                    reward += point_reward
+
+        elif self.parameters.reward_scheme == 5: #Combine #3 and test (#2)
+            reward = 0.0
+            target = 0.0
+            for i, j in zip(input, output):
+                target += i
+                point_reward = j * target
+                if point_reward > 1: point_reward = 1
+                elif point_reward < -1: point_reward = -1
+                reward += point_reward
+            if j * target > 0: reward += parameters.depth / 2.0
+
+        elif self.parameters.reward_scheme == 6: #3 Add #3 and #4
+            reward = 0.0
+            target = 0.0
+            for i, j in zip(input, output):
+                target += i
+                point_reward = j * target
+                if point_reward > 1: point_reward = 1
+                elif point_reward < -1: point_reward = -1
+                if i != 0 and point_reward == 1: reward += 1 #At =-1 points extra point
+                reward += point_reward
+
         return reward
 
-    def run_simulations(self, net, epoch_inputs, is_test):
+    def run_simulation(self, index, epoch_inputs):
         reward = 0.0
         for input in epoch_inputs:
-            net.reset()
+            self.agent.pop[index].reset_bank()
             net_output = []
             for inp in input: #Run network to get output
-                inp = np.array([inp])
-                net_output.append((2*(net.feedforward(inp)[0][0]-0.5)))
-            reward += self.get_reward(input, net_output, is_test) #get reward or fitness of the individual
+                inp=np.array([inp])
+                net_output.append((self.agent.pop[index].feedforward(inp)[0][0] - 0.5) * 2)
+            reward += self.get_reward(input, net_output) #get reward or fitness of the individual
 
-        return reward/len(epoch_inputs)
+        #print net_output
+        reward /= self.parameters.repeat_trials #Normalize
+        self.agent.fitness_evals[index] = reward #Encode reward as fitness for individual
+        return reward
 
     def evolve(self):
-        fitnesses = []
+        best_epoch_reward = -1000000
 
-        #Generate train sets for the epoch
-        train_set = self.generate_task(self.parameters.train_evals)
+        #Generate epoch input
+        epoch_inputs = []
+        for i in range(parameters.repeat_trials):
+            epoch_inputs.append(self.generate_input())
 
-        for net in self.pop: #Test all genomes/individuals
-            fitness = self.run_simulations(net, train_set, is_test=False)
-            fitnesses.append(fitness)
+        for i in range(self.parameters.population_size): #Test all genomes/individuals
+            reward = self.run_simulation(i, epoch_inputs)
+            if reward > best_epoch_reward: best_epoch_reward = reward
 
-        #Validation Score
-        valid_set = self.generate_task(self.parameters.valid_evals)
-        champion_index = fitnesses.index(max(fitnesses))
-        valid_fitness = self.run_simulations(self.pop[champion_index], valid_set, is_test=True)
+        #HOF test net
+        hof_index = self.agent.fitness_evals.index(max(self.agent.fitness_evals))
+        hof_score = self.test_net(hof_index)
 
-        self.evo.epoch(self.pop, fitnesses)
+        #Save population and HOF
+        if (gen + 1) % 1000 == 0:
+            mod.pickle_object(self.agent.pop, save_foldername + '/seq_classification_pop')
+            mod.pickle_object(self.agent.pop[hof_index], save_foldername + '/seq_classification_hof')
+            np.savetxt(save_foldername + '/gen_tag', np.array([gen + 1]), fmt='%.3f', delimiter=',')
 
-        return fitnesses[champion_index], valid_fitness
+        self.agent.epoch()
+        return best_epoch_reward, hof_score
+
+    def test_net(self, index):  # Test is binary
+        reward = 0.0
+        for trial in range(self.parameters.test_trials):
+            self.agent.pop[index].reset_bank()
+
+            input = self.generate_input()  # get input
+            net_output = []
+            for inp in input:  # Run network to get output
+                inp = np.array([inp])
+                net_output.append((self.agent.pop[index].feedforward(inp)[0][0] - 0.5) * 2)
+
+            target = 0.0
+            reward += 1
+
+            for i, j in zip(input, net_output):
+                target += i
+                if i == 1 or i == -1:
+                    point_reward = j * target
+                    if point_reward <= 0:
+                        reward -= 1
+                        break
 
 
+
+
+        return reward / (self.parameters.test_trials)
 
 if __name__ == "__main__":
-    parameters = Parameters()  # Create the Parameters class
-    if parameters.load_colony:
-        gen_start = int(np.loadtxt(parameters.save_foldername + 'gen_tag'))
-        tracker = mod.unpickle(parameters.save_foldername + 'tracker')
-    else:
-        tracker = Tracker(parameters, ['best_train', 'valid'], 'ecj.csv')  # Initiate tracker
-        gen_start = 1
-    print 'ECJ Training with', parameters.num_hnodes, 'hidden_nodes', parameters.num_mem, 'memory'
-    sim_task = Sequence_classifier(parameters)
-    for gen in range(gen_start, parameters.total_gens):
-        best_train_fitness, validation_fitness = sim_task.evolve()
-        print 'Gen:', gen, 'Ep_best:', '%.2f' %best_train_fitness, ' Valid_Fit:', '%.2f' %validation_fitness, 'Cumul_valid:', '%.2f'%tracker.all_tracker[1][1]
-        tracker.update([best_train_fitness, validation_fitness], gen)
-
+    print 'Running SEQUENCE CLASSIFIER with ', 'SSNE' if parameters.use_ssne else 'Coarse_Evo'
+    task = Sequence_classifier(parameters)
+    for gen in range(parameters.total_gens):
+        epoch_reward, hof_score = task.evolve()
+        print 'Generation:', gen+1, ' Epoch_reward:', "%0.2f" % epoch_reward, '  Score:', "%0.2f" % hof_score, '  Cumul_Score:', "%0.2f" % tracker.hof_avg_fitness
+        tracker.add_fitness(epoch_reward, gen)  # Add average global performance to tracker
+        tracker.add_hof_fitness(hof_score, gen)  # Add best global performance to tracker
 
 
 
