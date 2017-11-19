@@ -86,10 +86,8 @@ class Parameters:
             self.test_trials = 50
 
             #DEAP/SSNE stuff
-            self.use_ssne = 1
-            self.use_deap = 0
-            if self.use_deap or self.use_ssne:
-                self.ssne_param = SSNE_param( self.is_memoried)
+            self.use_ssne = False
+            self.ssne_param = SSNE_param(self.is_memoried)
             self.total_gens = 10000
             self.arch_type = 1 #0-Quasi GRU; #1-Quasi NTM #Determine the neural architecture
 
@@ -117,7 +115,8 @@ class Sequence_classifier:
         self.depth = self.parameters.depth
         self.interleaving_upper_bound = self.parameters.interleaving_upper_bound; self.interleaving_lower_bound = self.parameters.interleaving_lower_bound
 
-        self.agent = mod.SSNE(self.parameters, self.ssne_param, parameters.arch_type)
+        if parameters.use_ssne: self.agent = mod.SSNE(self.parameters, self.ssne_param, parameters.arch_type)
+        else: self.agent = mod.Coarse_Evo(self.parameters, self.ssne_param, parameters.arch_type)
 
     def generate_input(self):
         input = []
@@ -237,8 +236,6 @@ class Sequence_classifier:
         reward = 0.0
         for trial in range(self.parameters.test_trials):
             self.agent.pop[index].reset_bank()
-            if trial == self.parameters.test_trials - 1: print self.agent.pop[index].memory_cell.transpose(),
-
             input = self.generate_input()  # get input
             net_output = []
             for inp in input:  # Run network to get output
@@ -256,10 +253,6 @@ class Sequence_classifier:
                         reward -= 1
                         break
 
-            if trial == self.parameters.test_trials - 1: print target, net_output[-1]
-
-        print self.agent.pop[index].memory_cell.transpose()
-        print
         return reward / (self.parameters.test_trials)
 
 if __name__ == "__main__":
