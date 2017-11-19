@@ -12,8 +12,10 @@ class tracker(): #Tracker
         self.hof_fitnesses = []; self.hof_avg_fitness = 0; self.hof_tr_avg_fit = []
         if not os.path.exists(foldername):
             os.makedirs(foldername)
-        self.file_save = 'mem_seq_classifier.csv'
-
+        if parameters.is_memoried:
+            self.file_save = 'mem_seq_classifier.csv'
+        else:
+            self.file_save = 'norm_seq_classifier.csv'
 
 
     def add_fitness(self, fitness, generation):
@@ -41,11 +43,12 @@ class tracker(): #Tracker
         np.savetxt(filename, np.array(self.tr_avg_fit), fmt='%.3f', delimiter=',')
 
 class SSNE_param:
-    def __init__(self):
+    def __init__(self, is_memoried):
         self.num_input = 1
         self.num_hnodes = 5
         self.num_output = 1
-
+        if is_memoried: self.type_id = 'memoried'
+        else: self.type_id = 'normal'
 
         self.elite_fraction = 0.1
         self.crossover_prob = 0
@@ -53,29 +56,57 @@ class SSNE_param:
         self.weight_magnitude_limit = 1000000000000
         self.mut_distribution = 0 #1-Gaussian, 2-Laplace, 3-Uniform, ELSE-all 1s
 
+        if is_memoried:
+            self.total_num_weights = 3 * (
+                self.num_hnodes * (self.num_input + 1) + self.num_hnodes * (self.num_output + 1)) + 2 * self.num_hnodes * (
+                self.num_hnodes + 1) + self.num_output * (self.num_hnodes + 1) + self.num_hnodes
+        else:
+            #Normalize network flexibility by changing hidden nodes
+            naive_total_num_weights = self.num_hnodes*(self.num_input + 1) + self.num_output * (self.num_hnodes + 1)
+            #self.total_num_weights = self.num_hnodes * (self.num_input + 1) + self.num_output * (self.num_hnodes + 1)
+            #continue
+            mem_weights = 3 * (
+                 self.num_hnodes * (self.num_input + 1) + self.num_hnodes * (self.num_output + 1)) + 2 * self.num_hnodes * (
+                 self.num_hnodes + 1) + self.num_output * (self.num_hnodes + 1) + self.num_hnodes
+            normalization_factor = int(mem_weights/naive_total_num_weights)
 
-        self.total_num_weights = 3 * (
-            self.num_hnodes * (self.num_input + 1) + self.num_hnodes * (self.num_output + 1)) + 2 * self.num_hnodes * (
-            self.num_hnodes + 1) + self.num_output * (self.num_hnodes + 1) + self.num_hnodes
+            #Set parameters for comparable flexibility with memoried net
+            self.num_hnodes *= normalization_factor + 1
+            self.total_num_weights = self.num_hnodes * (self.num_input + 1) + self.num_output * (self.num_hnodes + 1)
         print 'Num parameters: ', self.total_num_weights
 
 class Parameters:
     def __init__(self):
-            self.population_size = 10
-            self.depth = 15
+            self.population_size = 100
+            self.depth = 21
             self.interleaving_lower_bound = 10
             self.interleaving_upper_bound = 20
+            self.is_memoried = 1
             self.repeat_trials = 10
             self.test_trials = 50
 
-
             #DEAP/SSNE stuff
-            self.use_ssne = 0
-            self.ssne_param = SSNE_param()
+            self.use_ssne = 1
+            self.use_deap = 0
+            if self.use_deap or self.use_ssne:
+                self.ssne_param = SSNE_param( self.is_memoried)
             self.total_gens = 10000
+            self.arch_type = 1 #0-Quasi GRU; #1-Quasi NTM #Determine the neural architecture
+
+
+            #Reward scheme
+            #1 Block continous reward - End decision matters
+            #2 Block reward binary - End decision matters plus also calculated binary rather than continously
+            #3 Fine continous reward - prediction at each time-step matters
+            #4 Coarse reward calcluated only at points of 1/-1 introdcution
+            #5 Combine #3 and #2 (test)
+            #6 Add #3 and #4
             self.reward_scheme = 3
-
-
+            self.tolerance = 1
+            self.test_tolerance = 1
+            if self.arch_type == 0: self.arch_type = 'quasi_gru'
+            elif self.arch_type ==1: self.arch_type = 'quasi_ntm'
+            else: sys.exit('Invalid choice of neural architecture')
 
 parameters = Parameters() #Create the Parameters class
 tracker = tracker(parameters) #Initiate tracker
@@ -86,9 +117,7 @@ class Sequence_classifier:
         self.depth = self.parameters.depth
         self.interleaving_upper_bound = self.parameters.interleaving_upper_bound; self.interleaving_lower_bound = self.parameters.interleaving_lower_bound
 
-        if parameters.use_ssne: self.agent = mod.SSNE(self.parameters, self.ssne_param)
-        else: self.agent = mod.Coarse_Evo(self.parameters, self.ssne_param)
-
+        self.agent = mod.SSNE(self.parameters, self.ssne_param, parameters.arch_type)
 
     def generate_input(self):
         input = []
@@ -208,6 +237,7 @@ class Sequence_classifier:
         reward = 0.0
         for trial in range(self.parameters.test_trials):
             self.agent.pop[index].reset_bank()
+            if trial == self.parameters.test_trials - 1: print self.agent.pop[index].memory_cell.transpose(),
 
             input = self.generate_input()  # get input
             net_output = []
@@ -222,17 +252,18 @@ class Sequence_classifier:
                 target += i
                 if i == 1 or i == -1:
                     point_reward = j * target
-                    if point_reward <= 0:
+                    if point_reward < 0:
                         reward -= 1
                         break
 
+            if trial == self.parameters.test_trials - 1: print target, net_output[-1]
 
-
-
+        print self.agent.pop[index].memory_cell.transpose()
+        print
         return reward / (self.parameters.test_trials)
 
 if __name__ == "__main__":
-    print 'Running SEQUENCE CLASSIFIER with ', 'SSNE' if parameters.use_ssne else 'Coarse_Evo'
+    print 'Running SEQUENCE CLASSIFIER with ', parameters.arch_type
     task = Sequence_classifier(parameters)
     for gen in range(parameters.total_gens):
         epoch_reward, hof_score = task.evolve()
